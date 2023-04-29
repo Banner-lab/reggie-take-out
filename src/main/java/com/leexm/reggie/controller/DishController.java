@@ -17,10 +17,13 @@ import com.leexm.reggie.service.SetmealDishService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @ClassName DishController
@@ -41,6 +44,9 @@ public class DishController {
     private CategoryService categoryService;
     @Autowired
     private SetmealDishService setmealDishService;
+
+    @Autowired
+    private RedisTemplate redisTemplate;
 
     @PostMapping
     public R <String> save(@RequestBody DishDto dishDto){
@@ -107,6 +113,9 @@ public class DishController {
 
         dishService.updateWithFlavor(dishDto);
 
+        Set keys = redisTemplate.keys("dish_*");
+        redisTemplate.delete(keys);
+
         return R.success("修改菜品成功");
     }
 
@@ -128,6 +137,16 @@ public class DishController {
 
     @GetMapping("/list")
     public R<List> list(Dish dish){
+        List<DishDto> dishDtos = null;
+
+        String key = "dish_"+dish.getCategoryId()+"_"+dish.getStatus();
+        dishDtos = (List<DishDto>)redisTemplate.opsForValue().get(key);
+
+        if(dishDtos != null){
+            return R.success(dishDtos);
+        }
+
+
 
         LambdaQueryWrapper<Dish> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(Dish::getCategoryId,dish.getCategoryId());
@@ -136,8 +155,8 @@ public class DishController {
 
         List<Dish> list = dishService.list(queryWrapper);
 
-        List<DishDto> dishDtos = new ArrayList<>();
 
+        List<DishDto> finalDishDtos = new ArrayList<>();
         list.forEach(l->{
             DishDto dishDto = new DishDto();
 
@@ -154,10 +173,12 @@ public class DishController {
 
             List<DishFlavor> falvors = dishFlavorService.list(dishFlavorLambdaQueryWrapper);
             dishDto.setFlavors(falvors);
-            dishDtos.add(dishDto);
+            finalDishDtos.add(dishDto);
         });
 
-        return R.success(dishDtos);
+        redisTemplate.opsForValue().set(key,finalDishDtos,60, TimeUnit.MINUTES);
+
+        return R.success(finalDishDtos);
     }
 
     @PostMapping("/status/{status}")
